@@ -1,0 +1,250 @@
+---
+title: "Modélisation"
+author: "Wendlassida Jonathan Adan Kaboré"
+date: "2025-11-05"
+output: html_document
+---
+
+# Encodage des variables
+Etant donné que l'on souhaite faire de la tarification, il serait plus adéquat de discrétiser les variables continues, avant de pouvoir classifier de façon compréhensible le risque représenté par un assuré.
+
+```{r message=FALSE, warning=FALSE}
+# Packages 
+library(stats)
+library(pscl)
+```
+
+
+```{r}
+home <- read.csv("data/home_data_cleaned.csv")
+home <- home[,-1]
+str(home)
+```
+
+```{r}
+# client_start_year
+max(home$client_start_year)
+home$fidelity <- 2023 - home$client_start_year
+summary(home$fidelity)
+boxplot(home$fidelity)
+hist(home$fidelity)
+
+home$fidelity_cat <- cut(home$fidelity,
+                         breaks = c(-Inf, 2,
+                                    6, 10, Inf),
+                         labels = c("<=2", "2-6", 
+                                    "6-10", ">10"))
+barplot(table(home$fidelity_cat))
+```
+
+```{r}
+# Age of the oldest insured
+home$age_oldest_insured <- 2023 - home$oldest_insured_year_birth
+summary(home$age_oldest_insured)
+boxplot(home$age_oldest_insured)
+hist(home$age_oldest_insured)
+
+home$group_age_oldest_insured <- cut(home$age_oldest_insured,
+                                     breaks = c(0, 20, 35, 60, Inf),
+                                     labels = c("Adolescent",
+                                                "Jeune adulte",
+                                                "Adulte",
+                                                "Aîné"))
+barplot(table(home$group_age_oldest_insured))
+```
+
+```{r}
+# Credit_score (selon TransUnion)
+home$credit_score_level <- cut(home$credit_score,
+                               breaks = c(0, 692, 742, 789, 832, Inf),
+                               labels = c("1%-20%", "21%-40%",
+                                          "41%-60%", "61%-80%",
+                                          "81%-100%"))
+barplot(table(home$credit_score_level))
+```
+```{r}
+# past_claims
+home$past_claims <- as.factor(home$past_claims)
+barplot(table(home$past_claims))
+
+# floors_above_ground
+home$floors_above_ground <- as.factor(home$floors_above_ground)
+barplot(table(home$floors_above_ground))
+
+```
+```{r}
+# num_children
+barplot(table(home$num_children))
+home$num_children <- as.factor(home$num_children)
+```
+```{r}
+# construction_year
+barplot(table(home$construction_year))
+home$age_maison <- 2023 - home$construction_year
+
+home$etat_maison <- cut(home$age_maison,
+                        breaks = c(-Inf, 5, 20, 50, Inf),
+                        labels = c("Neuve",
+                                   "Récente",
+                                   "Ancienne",
+                                   "Très ancienne"),
+                        right = TRUE)
+
+barplot(table(home$etat_maison))
+```
+```{r}
+# roof_year 
+home$age_roof <- 2023 - home$roof_year
+
+home$etat_toit <- cut(home$age_roof,
+                      breaks = c(-Inf, 5, 15, Inf),
+                      labels = c("Neuf",
+                                 "Bon",
+                                 "Ancien"),
+                      right = TRUE)
+
+barplot(table(home$etat_toit))
+
+```
+```{r}
+# residence_stability
+boxplot(home$residence_stability)
+
+home$residence_stability_group <- cut(home$residence_stability,
+                                      breaks = c(-Inf, 2, 10, 25, Inf),
+                                      labels = c("Très instable",
+                                                 "Modérément stable",
+                                                 "Stable",
+                                                 "Très stable"),
+                                      right = TRUE)
+barplot(table(home$residence_stability_group))
+```
+```{r}
+# Franchise
+home$deductible <- as.factor(home$deductible)
+barplot(table(home$deductible))
+```
+
+## Modèle de fréquence 
+
+A partir des variables du jeu de données, on tente de modéliser la fréquence des accidents en assurance habitation en utilisant la méthode forward.
+
+```{r eval=FALSE}
+# Modèle de base 
+mod0 <- glm(num_claims ~ 1,
+            data = home,
+            family = poisson(link = "log"),
+            offset = log(earned_exposure))
+
+# Modèle complet 
+mod_complet <- glm(num_claims ~ insured_employment + marital_status + num_children + smoker + past_claims + region 
+            + house_type + floors_above_ground + exterior_cladding +
+                heating_type + auxiliary_heating + alarm_system +
+                garage_type + basement + roof_type + skylight_presence
+            + pool_presence + water_body_proximity + fire_station_proximity
+            + hydrant_proximity + room_rental + commercial_activities
+            + mortgage + liability_limit + deductible + earthquake_coverage
+            + multi_product_discount + fidelity_cat + group_age_oldest_insured
+            + credit_score_level + etat_maison + etat_toit
+            + residence_stability_group,
+            data = home,
+            family = poisson(link = "log"),
+            offset = log(earned_exposure))
+
+
+# Sélection des variables par méthode forward 
+mod_forward <- step(mod0,
+                    scope = formula(mod_complet),
+                    direction = "forward",
+                    trace = TRUE)
+```
+```{r}
+frequence <- glm(num_claims ~ exterior_cladding + residence_stability_group + 
+    deductible + region + alarm_system + hydrant_proximity + 
+    fire_station_proximity + heating_type + fidelity_cat + insured_employment + 
+    multi_product_discount + smoker + auxiliary_heating + etat_toit + 
+    credit_score_level + past_claims + group_age_oldest_insured + 
+    marital_status + house_type + water_body_proximity + skylight_presence + 
+    room_rental + commercial_activities,
+            data = home,
+            family = poisson(link = "log"),
+            offset = log(earned_exposure))
+
+# sauvegarder le modèle
+save(frequence, file = "data/modele_poisson_forward.RData")
+```
+
+```{r}
+# Significativité
+summary(frequence)
+
+# Surdispersion
+deviance(frequence) / df.residual(frequence) # sous-dispersion
+c(mean(home$num_claims), mean(home$num_claims))
+mean(home$num_claims == 0) # opter pour ZIP
+
+# Résidus
+par(mfrow=c(2,2))
+plot(frequence)
+par(mfrow=c(1,1))
+
+res <- residuals(frequence, type = "pearson")
+fitted_vals <- fitted(frequence)
+plot(fitted_vals, res, pch = 20, col = "gray")
+abline(h = 0, col = "red")
+
+# Qualité globale
+frequence$deviance
+frequence$df.residual
+
+```
+```{r echo=FALSE}
+frequence_zip <- zeroinfl(
+  num_claims ~ exterior_cladding + residence_stability_group + deductible + 
+    region + alarm_system + hydrant_proximity + fire_station_proximity + 
+    heating_type + fidelity_cat + insured_employment + multi_product_discount + 
+    smoker + auxiliary_heating + etat_toit + credit_score_level + past_claims + 
+    group_age_oldest_insured + marital_status + house_type + water_body_proximity + 
+    skylight_presence + room_rental + commercial_activities
+  | region + fidelity_cat + insured_employment + credit_score_level + past_claims, 
+  data = home,
+  dist = "poisson",
+  offset = log(earned_exposure)
+)
+
+```
+
+```{r}
+save(frequence_zip, file = "data/modele_poisson_zip.RData")
+```
+
+```{r}
+# Significativité
+summary(frequence_zip)
+
+
+```
+
+```{r}
+AIC(frequence, frequence_zip)
+BIC(frequence, frequence_zip)
+```
+```{r}
+vuong(frequence, frequence_zip)
+```
+```{r}
+logLik(frequence)
+logLik(frequence_zip)
+```
+```{r}
+obs_zero <- mean(home$num_claims == 0)
+pred_zero_pois <- mean(dpois(0, predict(frequence, type="response")))
+pred_zero_zip  <- mean(predict(frequence_zip, type="zero"))
+
+data.frame(Modele = c("Poisson","ZIP"),
+           P_zero_prevu = c(pred_zero_pois, pred_zero_zip),
+           P_zero_observe = obs_zero)
+
+```
+
+
